@@ -1,7 +1,7 @@
 #include<Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-LiquidCrystal_I2C lcd(0x27,20,4);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
 #define l1 9
 #define l2 10
@@ -9,12 +9,19 @@ LiquidCrystal_I2C lcd(0x27,20,4);
 #define r1 6
 #define r2 5
 
-#define turn_delay 650
+//maze_solver Variables
+#define turn_delay 350
+#define leap_time 200
+#define align_ms 1000
+String path = "";
+boolean maze_solved = 0;
+int index = 0;
+//
 
 int max_speed = 200;
 int total_jun = 4;
 int present_junction = 0, dest_jun = 1;
-int base_speed =  120;
+int base_speed =  80;
 int align_speed = 100;
 int turn_speed = 200;
 
@@ -29,7 +36,7 @@ uint8_t sensor_enable = 4;
 boolean line_mode = 0;
 
 //PID Variables
-float Kp = 4, Kd = 8, Ki = 0;
+float Kp = 6, Kd = 8, Ki = 0;
 //float Kp = 6, Kd = 18, Ki = 0;
 float P = 0, I = 0, D = 0;
 float PID = 0;
@@ -55,8 +62,6 @@ unsigned long last_ms = 0;
 int update_ms = 250;
 float battery = 0;
 
-
-
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -67,47 +72,285 @@ void setup() {
   pinMode(r2, OUTPUT);
   init_mux();
   init_lcd();
-  UI_mode(mode);
-  while (1)
-  {
-    if (pid_flag == 1)
-    {
-      break;
-    }
-    select = 0;
-    button_stat();
-    if (select == 1)
-    {
-      select_UI(mode);
-    }
-    if (mode != prev_mode)
-    {
-      UI_mode(mode);
-    }
-    prev_mode = mode;
-    for (int i = 0; i < 2; i++)
-    {
-      Serial.print(button[i]);
-      Serial.print(" ");
-    }
-    Serial.print(mode);
-    Serial.print(" ");
-    Serial.println(" ");
-  }
-  last_ms = millis();
+  calibrate_sensors();
+  //  UI_mode(mode);
+  //  while (1)
+  //  {
+  //    if (pid_flag == 1)
+  //    {
+  //      break;
+  //    }
+  //    select = 0;
+  //    button_stat();
+  //    if (select == 1)
+  //    {
+  //      select_UI(mode);
+  //    }
+  //    if (mode != prev_mode)
+  //    {
+  //      UI_mode(mode);
+  //    }
+  //    prev_mode = mode;
+  //    for (int i = 0; i < 2; i++)
+  //    {
+  //      //Serial.print(button[i]);
+  //      //Serial.print(" ");
+  //    }
+  //    //Serial.print(mode);
+  //    //Serial.print(" ");
+  //    //Serial.println(" ");
+  //  }
+  //  last_ms = millis();
 }
 
-void loop() {
-  // cal_PID();
-  // motors(base_speed - PID, base_speed + PID);
+void loop()
+{
   if (millis() - last_ms > update_ms)
   {
     last_ms = millis();
-    disp_sensor();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(path);
+    //disp_sensor();
   }
   read_sensors();
+  if (maze_solved)
+  {
+    execute_maze();
+  }
+  else
+  {
+    take_decision();
+    if(maze_solved)
+    {
+      sensor_reading = 35;
+    }
+  }
   cal_PID();
-  motors(base_speed + PID, base_speed - PID);
+  motors(base_speed - PID, base_speed + PID);
+}
+
+void done()
+{
+  maze_solved = 1;
+  leftWall();
+  delay(10000);
+}
+
+void leftWall()
+{
+  boolean shortest;
+  do
+  {
+    shortest = false;
+    for (int i = 0; i < path.length() - 2; i++)
+    {
+      if (path.length() < 3)
+      {
+        break;
+      }
+      if (path.substring(i, i + 3) == "LBR")
+      {
+        path[i] = 'B';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+      else if (path.substring(i, i + 3) == "LBS")
+      {
+        path[i] = 'R';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+      else if (path.substring(i, i + 3) == "RBL")
+      {
+        path[i] = 'B';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+      else if (path.substring(i, i + 3) == "SBL")
+      {
+        path[i] = 'R';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+      else if (path.substring(i, i + 3) == "SBS")
+      {
+        path[i] = 'B';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+      else if (path.substring(i, i + 3) == "LBL")
+      {
+        path[i] = 'S';
+        path.remove(i + 1, 2);
+        shortest = true;
+      }
+    }
+  }
+  while (shortest);
+}
+
+void execute_maze()
+{
+  if (junction == 1)
+  {
+    turn(path[index++]);
+  }
+  else if (sensor[0] == 1 || sensor[1] == 1)
+  {
+    turn(path[index++]);
+  }
+  else if (sensor[6] == 1 || sensor[7] == 1)
+  {
+    turn(path[index++]);
+  }
+}
+
+void turn(char dir)
+{
+  switch (dir)
+  {
+    case 'L':
+      {
+        take_left();
+      }
+      break;
+    case 'R':
+      {
+        take_right();
+      }
+      break;
+    case 'S':
+      {
+        go_straight();
+      }
+      break;
+  }
+}
+
+void take_decision()
+{
+  if (junction == 1)
+  {
+    take_left();
+  }
+  else if (sensor[0] == 1 || sensor[1] == 1)
+  {
+    take_left();
+  }
+  else if (sensor[6] == 1 || sensor[7] == 1)
+  {
+    boolean straight = check_straight();
+    if (!straight)
+    {
+      take_right();
+    }
+    else
+    {
+      go_straight();
+    }
+  }
+  else if (sum == 0)
+  {
+    turn_back();
+  }
+  Serial.println(path);
+}
+
+void align()
+{
+  last_ms = millis();
+  while (1)
+  {
+    if (millis() - last_ms > align_ms)
+    {
+      last_ms = millis();
+      break;
+    }
+    read_sensors();
+    cal_PID();
+    motors(- PID, PID);
+  }
+}
+
+void turn_back()
+{
+  motors(align_speed, align_speed);
+  delay(leap_time);
+  brake();
+  delay(10);
+  motors(-align_speed, align_speed);
+  delay(2 * turn_delay);
+  update_path('B');
+  align();
+}
+
+void take_left()
+{
+  motors(align_speed, align_speed);
+  delay(leap_time);
+  brake();
+  delay(10);
+  read_sensors();
+  if (junction == 1 && !maze_solved)
+  {
+    done();
+  }
+  motors(-align_speed, align_speed);
+  delay(turn_delay);
+  if (!maze_solved)
+  {
+    update_path('L');
+  }
+  align();
+}
+
+void take_right()
+{
+  motors(align_speed, align_speed);
+  brake();
+  delay(10);
+  read_sensors();
+  if (junction == 1 && !maze_solved)
+  {
+    done();
+  }
+  motors(align_speed, -align_speed);
+  delay(turn_delay);
+  if (!maze_solved)
+  {
+    update_path('R');
+  }
+  align();
+}
+
+void go_straight()
+{
+  align();
+  if (!maze_solved)
+  {
+    update_path('S');
+  }
+}
+
+boolean check_straight()
+{
+  motors(align_speed, align_speed);
+  delay(leap_time);
+  read_sensors();
+  if (sum != 0)
+  {
+    return 1;
+  }
+  else
+  {
+    return 0;
+  }
+}
+
+void update_path(char dir)
+{
+  path += dir;
 }
 
 void select_UI(int index)
@@ -259,7 +502,7 @@ void select_UI(int index)
       }
       break;
     case 6 :
-      { 
+      {
         last_ms = millis();
         while (1)
         {
@@ -525,8 +768,8 @@ void button_stat()
 
 void init_lcd()
 {
-  lcd.init(); 
-  lcd.backlight(); 
+  lcd.init();
+  lcd.backlight();
   lcd.clear();
   for (int i = 0; i < 2; i++)
   {
@@ -605,8 +848,8 @@ void read_sensors()
       sum += sensor[i];
       temp += (w[i] * sensor[i]);
     }
-    Serial.print(sensor[i]);
-    Serial.print(" ");
+    //Serial.print(sensor[i]);
+    //Serial.print(" ");
   }
   if (sum != 0)
   {
@@ -621,11 +864,11 @@ void read_sensors()
   {
     junction = 0;
   }
-  Serial.print(sensor_reading);
-  Serial.print(" ");
-  Serial.print(junction);
-  Serial.print(" ");
-  Serial.println("");
+  //Serial.print(sensor_reading);
+  //Serial.print(" ");
+  //Serial.print(junction);
+  //Serial.print(" ");
+  //Serial.println("");
 }
 
 void calibrate_sensors()
@@ -667,8 +910,8 @@ void calibrate_sensors()
   threshold = min_reading + (max_reading - min_reading) / 2;
   threshold += 150;
   motors(0, 0);
-  Serial.println(threshold);
-  Serial.println(threshold);
+  //Serial.println(threshold);
+  //Serial.println(threshold);
   delay(2000);
   calib = 0;
 }
